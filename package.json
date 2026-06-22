@@ -7,7 +7,8 @@
                     "build":  "tsc",
                     "start":  "ts-node src/coordinator/index.ts",
                     "start:coordinator":  "ts-node src/coordinator/index.ts",
-                    "mcp":  "ts-node src/mcp/index.ts"
+                    "mcp":  "ts-node src/mcp/index.ts",
+    "mcp:http": "ts-node src/mcp/index.ts"
                 },
     "keywords":  [
                      "croo",

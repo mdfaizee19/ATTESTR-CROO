@@ -1,10 +1,15 @@
 import dotenv from 'dotenv'; dotenv.config({ override: true });
+import http from 'http';
+import { randomUUID } from 'crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+
+const PORT = Number(process.env.PORT ?? 3001);
+const SERVER_URL = (process.env.SERVER_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -334,102 +339,307 @@ async function fullDueDiligence(query: string): Promise<object> {
   };
 }
 
-// ── MCP Server ────────────────────────────────────────────────────────────────
+// ── MCP Server factory ────────────────────────────────────────────────────────
+// Creates a fresh Server instance with all 4 tools registered.
+// Called once per stateless /mcp request so each request is fully independent.
 
-const server = new Server(
-  { name: 'attestr', version: '1.0.0' },
-  { capabilities: { tools: {} } },
-);
+function createMcpServer(): Server {
+  const server = new Server(
+    { name: 'attestr', version: '1.0.0' },
+    { capabilities: { tools: {} } },
+  );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: 'check_contract_risk',
-      description: 'Analyze a contract or wallet address on Base mainnet. Returns SAFE/CAUTION/DANGEROUS badge, risk score 0-100, and a detailed risk report.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          address: { type: 'string', description: 'Ethereum address (0x...) to analyze' },
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      {
+        name: 'check_contract_risk',
+        description: 'Analyze a contract or wallet address on Base mainnet. Returns SAFE/CAUTION/DANGEROUS badge, risk score 0-100, and a detailed risk report.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            address: { type: 'string', description: 'Ethereum address (0x...) to analyze' },
+          },
+          required: ['address'],
         },
-        required: ['address'],
       },
-    },
-    {
-      name: 'research_web3',
-      description: 'Research any Web3 / DeFi topic using live web search + source verification + AI synthesis. Returns a structured intelligence report with confidence score.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Research question or topic' },
+      {
+        name: 'research_web3',
+        description: 'Research any Web3 / DeFi topic using live web search + source verification + AI synthesis. Returns a structured intelligence report with confidence score.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Research question or topic' },
+          },
+          required: ['query'],
         },
-        required: ['query'],
       },
-    },
-    {
-      name: 'analyze_hyperliquid_vault',
-      description: 'Analyze a Hyperliquid vault. Returns TVL, APR, commission, capacity, risk score, and a YES/NO deposit recommendation.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          vault_address: { type: 'string', description: 'Hyperliquid vault address (0x...)' },
+      {
+        name: 'analyze_hyperliquid_vault',
+        description: 'Analyze a Hyperliquid vault. Returns TVL, APR, commission, capacity, risk score, and a YES/NO deposit recommendation.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            vault_address: { type: 'string', description: 'Hyperliquid vault address (0x...)' },
+          },
+          required: ['vault_address'],
         },
-        required: ['vault_address'],
       },
-    },
-    {
-      name: 'full_due_diligence',
-      description: 'Run a complete due diligence: web research + contract risk analysis (if an address is in the query) combined into one report.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'Research query — include a contract address to trigger risk analysis' },
+      {
+        name: 'full_due_diligence',
+        description: 'Run a complete due diligence: web research + contract risk analysis (if an address is in the query) combined into one report.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Research query — include a contract address to trigger risk analysis' },
+          },
+          required: ['query'],
         },
-        required: ['query'],
       },
-    },
-  ],
-}));
+    ],
+  }));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    try {
+      let result: object;
+      if (name === 'check_contract_risk') {
+        const { address } = args as { address: string };
+        if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error(`Invalid address: ${address}`);
+        result = await checkContractRisk(address);
+      } else if (name === 'research_web3') {
+        const { query } = args as { query: string };
+        result = await researchWeb3(query);
+      } else if (name === 'analyze_hyperliquid_vault') {
+        const { vault_address } = args as { vault_address: string };
+        if (!/^0x[0-9a-fA-F]{40}$/.test(vault_address)) throw new Error(`Invalid vault address: ${vault_address}`);
+        result = await analyzeHyperliquidVault(vault_address);
+      } else if (name === 'full_due_diligence') {
+        const { query } = args as { query: string };
+        result = await fullDueDiligence(query);
+      } else {
+        throw new Error(`Unknown tool: ${name}`);
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
+    }
+  });
 
-  try {
-    let result: object;
+  return server;
+}
 
-    if (name === 'check_contract_risk') {
-      const { address } = args as { address: string };
-      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error(`Invalid address: ${address}`);
-      result = await checkContractRisk(address);
-    } else if (name === 'research_web3') {
-      const { query } = args as { query: string };
-      result = await researchWeb3(query);
-    } else if (name === 'analyze_hyperliquid_vault') {
-      const { vault_address } = args as { vault_address: string };
-      if (!/^0x[0-9a-fA-F]{40}$/.test(vault_address)) throw new Error(`Invalid vault address: ${vault_address}`);
-      result = await analyzeHyperliquidVault(vault_address);
-    } else if (name === 'full_due_diligence') {
-      const { query } = args as { query: string };
-      result = await fullDueDiligence(query);
-    } else {
-      throw new Error(`Unknown tool: ${name}`);
+// ── OAuth / auth helpers ──────────────────────────────────────────────────────
+
+function getApiKey(): string {
+  return requireEnv('MCP_API_KEY');
+}
+
+function validateBearer(req: http.IncomingMessage): boolean {
+  const auth = req.headers['authorization'] ?? '';
+  const [scheme, token] = auth.split(' ');
+  return scheme === 'Bearer' && token === getApiKey();
+}
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+function json(res: http.ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+  res.end(payload);
+}
+
+function html(res: http.ServerResponse, status: number, body: string): void {
+  res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(body);
+}
+
+// ── HTTP request router ───────────────────────────────────────────────────────
+
+async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', SERVER_URL);
+  const path = url.pathname;
+  const method = req.method ?? 'GET';
+
+  // CORS pre-flight
+  if (method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, mcp-session-id',
+    });
+    res.end();
+    return;
+  }
+
+  // ── OAuth 2.0 AS metadata ─────────────────────────────────────────────────
+  if (path === '/.well-known/oauth-authorization-server') {
+    json(res, 200, {
+      issuer: SERVER_URL,
+      authorization_endpoint: `${SERVER_URL}/oauth/authorize`,
+      token_endpoint: `${SERVER_URL}/oauth/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      token_endpoint_auth_methods_supported: ['none'],
+      scopes_supported: ['mcp'],
+      code_challenge_methods_supported: ['S256', 'plain'],
+    });
+    return;
+  }
+
+  // ── Authorization endpoint — simple API-key form ──────────────────────────
+  if (path === '/oauth/authorize' && method === 'GET') {
+    const redirectUri = url.searchParams.get('redirect_uri') ?? '';
+    const state = url.searchParams.get('state') ?? '';
+    const clientId = url.searchParams.get('client_id') ?? '';
+    html(res, 200, `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Attestr MCP — Connect</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:40px;max-width:420px;width:100%;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+    h1{font-size:1.25rem;font-weight:700;color:#0f172a;margin-bottom:6px}
+    p{font-size:.875rem;color:#64748b;margin-bottom:24px;line-height:1.5}
+    label{display:block;font-size:.8rem;font-weight:600;color:#334155;margin-bottom:6px;letter-spacing:.04em;text-transform:uppercase}
+    input{display:block;width:100%;padding:10px 14px;border:1px solid #cbd5e1;border-radius:8px;font-size:.875rem;font-family:monospace;color:#0f172a;outline:none;margin-bottom:20px}
+    input:focus{border-color:#0077B6;box-shadow:0 0 0 3px rgba(0,119,182,.15)}
+    button{display:block;width:100%;padding:11px;background:#0077B6;color:#fff;border:none;border-radius:8px;font-size:.875rem;font-weight:700;cursor:pointer;letter-spacing:.02em}
+    button:hover{background:#005f8f}
+    .logo{font-weight:900;font-size:1rem;color:#0077B6;letter-spacing:.06em;margin-bottom:24px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">ATTESTR</div>
+    <h1>Connect to Claude.ai</h1>
+    <p>Enter your Attestr API key to grant Claude.ai access to the Web3 intelligence tools.</p>
+    <form method="POST" action="/oauth/authorize">
+      <input type="hidden" name="redirect_uri" value="${encodeURIComponent(redirectUri)}">
+      <input type="hidden" name="state" value="${encodeURIComponent(state)}">
+      <input type="hidden" name="client_id" value="${encodeURIComponent(clientId)}">
+      <label for="key">API Key</label>
+      <input id="key" type="password" name="api_key" placeholder="Enter your MCP_API_KEY" autocomplete="off" required>
+      <button type="submit">Authorize →</button>
+    </form>
+  </div>
+</body>
+</html>`);
+    return;
+  }
+
+  // ── Authorization form submission ─────────────────────────────────────────
+  if (path === '/oauth/authorize' && method === 'POST') {
+    const body = await readBody(req);
+    const params = new URLSearchParams(body);
+    const apiKey = params.get('api_key') ?? '';
+    const redirectUri = decodeURIComponent(params.get('redirect_uri') ?? '');
+    const state = decodeURIComponent(params.get('state') ?? '');
+
+    if (apiKey !== getApiKey()) {
+      html(res, 401, '<h1>Invalid API key</h1><p>Go back and try again.</p>');
+      return;
     }
 
-    return {
-      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      content: [{ type: 'text', text: `Error: ${message}` }],
-      isError: true,
-    };
+    // Use the API key as the authorization code
+    const redirectUrl = new URL(redirectUri);
+    redirectUrl.searchParams.set('code', apiKey);
+    if (state) redirectUrl.searchParams.set('state', state);
+    res.writeHead(302, { Location: redirectUrl.toString() });
+    res.end();
+    return;
   }
-});
+
+  // ── Token endpoint — exchange code for bearer token ───────────────────────
+  if (path === '/oauth/token' && method === 'POST') {
+    const body = await readBody(req);
+    const params = new URLSearchParams(body);
+    const grantType = params.get('grant_type');
+    const code = params.get('code');
+
+    if (grantType !== 'authorization_code' || code !== getApiKey()) {
+      json(res, 400, { error: 'invalid_grant', error_description: 'Invalid code or grant type' });
+      return;
+    }
+
+    json(res, 200, {
+      access_token: code,
+      token_type: 'bearer',
+      expires_in: 86400,
+      scope: 'mcp',
+    });
+    return;
+  }
+
+  // ── MCP endpoint — bearer validation + stateless transport ───────────────
+  if (path === '/mcp') {
+    if (!validateBearer(req)) {
+      res.writeHead(401, {
+        'WWW-Authenticate': `Bearer realm="${SERVER_URL}", error="invalid_token"`,
+        'Content-Type': 'application/json',
+      });
+      res.end(JSON.stringify({ error: 'invalid_token', error_description: 'Valid Bearer token required' }));
+      return;
+    }
+
+    let body: unknown;
+    if (method === 'POST') {
+      const raw = await readBody(req);
+      try { body = JSON.parse(raw); } catch { body = raw; }
+    }
+
+    // Stateless: new Server + transport per request
+    const mcpServer = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, body);
+    return;
+  }
+
+  // ── Health check ──────────────────────────────────────────────────────────
+  if (path === '/health') {
+    json(res, 200, { status: 'ok', server: 'attestr-mcp', version: '1.0.0' });
+    return;
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'not_found' }));
+}
+
+// ── Start HTTP server ─────────────────────────────────────────────────────────
 
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  process.stderr.write('[attestr-mcp] server running\n');
+  // Validate required env vars on startup
+  requireEnv('MCP_API_KEY');
+  requireEnv('GROQ_API_KEY');
+
+  const httpServer = http.createServer((req, res) => {
+    handleRequest(req, res).catch((err) => {
+      process.stderr.write(`[attestr-mcp] request error: ${err}\n`);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'internal_server_error' }));
+      }
+    });
+  });
+
+  httpServer.listen(PORT, () => {
+    process.stderr.write(`[attestr-mcp] HTTP server listening on port ${PORT}\n`);
+    process.stderr.write(`[attestr-mcp] MCP endpoint:    ${SERVER_URL}/mcp\n`);
+    process.stderr.write(`[attestr-mcp] OAuth metadata:  ${SERVER_URL}/.well-known/oauth-authorization-server\n`);
+    process.stderr.write(`[attestr-mcp] Connect in Claude.ai → Settings → Integrations → Add MCP Server\n`);
+    process.stderr.write(`[attestr-mcp] Server URL: ${SERVER_URL}\n`);
+  });
 }
 
 main().catch((err) => {
