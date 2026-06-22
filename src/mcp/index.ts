@@ -481,7 +481,9 @@ function validateBearer(req: http.IncomingMessage): boolean {
   const auth = req.headers['authorization'] ?? '';
   const [scheme, token] = auth.split(' ');
   if (scheme !== 'Bearer' || !token) return false;
-  return safeEqual(token, getApiKey());
+  const key = getApiKey();
+  if (!key) return false; // fail closed: MCP_API_KEY not configured
+  return safeEqual(token, key);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -599,7 +601,8 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return;
     }
 
-    if (!safeEqual(apiKey, getApiKey())) {
+    const serverKey = getApiKey();
+    if (!serverKey || !safeEqual(apiKey, serverKey)) {
       html(res, 401, '<h1>Invalid API key</h1><p>Go back and try again.</p>');
       return;
     }
