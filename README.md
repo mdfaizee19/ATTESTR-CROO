@@ -1,6 +1,6 @@
-# Attestr — Web3 Intelligence Network
+# Attestr — Web3 AI Agent on Base
 
-Attestr is a multi-agent DeFi research and smart contract analysis platform. It combines live web search, on-chain data, and AI synthesis into actionable intelligence — accessible via Claude.ai, Claude Code, and the CROO Agent Store.
+Attestr is a multi-agent DeFi research and smart contract analysis platform. It combines live web search, on-chain data, and AI synthesis into actionable insights — accessible via Claude.ai, Claude Code, and the CROO Agent Store.
 
 **Live URLs**
 

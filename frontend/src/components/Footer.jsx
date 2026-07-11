@@ -19,7 +19,7 @@ export default function Footer() {
           </div>
           <p style={{ fontSize:'.85rem', color:C.muted, lineHeight:1.7, marginBottom:20,
             fontFamily:'Times New Roman, serif', maxWidth:240 }}>
-            Web3 intelligence network for DeFi research and smart contract analysis on Base mainnet.
+            Web3 AI Agent for DeFi research and smart contract analysis on Base mainnet.
           </p>
           <a href="https://agent.croo.network/agents/20ba0841-8411-4ee7-960e-5b1d376943d3"
             target="_blank" rel="noreferrer"

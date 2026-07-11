@@ -1,7 +1,7 @@
 {
     "name":  "attestr",
     "version":  "1.0.0",
-    "description":  "Web3 Intelligence Network for DeFi research and smart contract analysis, built on the CROO Agent Protocol",
+    "description":  "Web3 AI Agent for DeFi research and smart contract analysis on Base, built on the CROO Agent Protocol",
     "main":  "dist/coordinator/index.js",
     "scripts":  {
                     "build":  "tsc",

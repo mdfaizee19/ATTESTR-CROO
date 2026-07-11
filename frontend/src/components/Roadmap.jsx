@@ -4,7 +4,7 @@ import Tag from './Tag'
 const PHASES = [
   {
     phase:'Phase 1', label:'Now', status:'live', color:C.green,
-    title:'Core Intelligence Network',
+    title:'Core AI Agent Platform',
     items:['Web Research Agent','Source Verification Agent','Synthesis Agent (Claude)','Contract Risk Check','Hyperliquid Vault Analysis','MCP Server'],
     note: null,
   },
