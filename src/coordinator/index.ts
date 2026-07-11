@@ -61,7 +61,7 @@ async function groqJson(systemPrompt: string, userPrompt: string): Promise<strin
   for (let attempt = 1; attempt <= 3; attempt++) {
     const sys = attempt === 1
       ? systemPrompt + jsonInstruction
-      : systemPrompt + jsonInstruction + `\n\nCRITICAL (attempt ${attempt}/3): Your previous response was not valid JSON. Output ONLY a JSON object starting with { — nothing else.`;
+      : systemPrompt + jsonInstruction + `\n\nCRITICAL (attempt ${attempt}/3): Your previous response was not valid JSON. Output ONLY a JSON object starting with { -- nothing else.`;
     const text = await groq(sys, userPrompt);
     try {
       JSON.parse(extractJson(text));
@@ -262,7 +262,7 @@ async function gatherAddressContext(address: string, chainId: number): Promise<s
       const dir = tx.from.toLowerCase() === address.toLowerCase() ? 'OUT' : 'IN ';
       const eth = (Number(tx.value) / 1e18).toFixed(6);
       const fn = tx.functionName ? ` [${tx.functionName.split('(')[0]}]` : '';
-      lines.push(`  ${dir} ${eth} ETH â†’ ${tx.to}${fn}${tx.isError === '1' ? ' (FAILED)' : ''}`);
+      lines.push(`  ${dir} ${eth} ETH â†' ${tx.to}${fn}${tx.isError === '1' ? ' (FAILED)' : ''}`);
     }
   }
 
@@ -312,7 +312,7 @@ Return a JSON object with exactly these fields:
   "report": "<markdown risk report with ## Risk Summary, ## On-Chain Analysis, ## Risk Factors, ## Recommendations sections>"
 }
 
-Scoring guide: 0-30 â†’ SAFE, 31-65 â†’ CAUTION, 66-100 â†’ DANGEROUS. Badge must match riskScore range.
+Scoring guide: 0-30 â†' SAFE, 31-65 â†' CAUTION, 66-100 â†' DANGEROUS. Badge must match riskScore range.
 A verified, named, proxy-pattern stablecoin contract with no anomalous on-chain behaviour should score in the SAFE range.
 Return only valid JSON. No markdown fences.`;
 
@@ -341,7 +341,7 @@ Return only valid JSON. No markdown fences.`;
       address: task.address,
       badge: 'CAUTION' as const,
       riskScore: 50,
-      reasons: ['Risk analysis unavailable — AI service returned non-JSON response'],
+      reasons: ['Risk analysis unavailable -- AI service returned non-JSON response'],
       report: '## Risk Analysis\n\nUnable to complete AI risk analysis. On-chain data was gathered but synthesis failed.',
       analyzedAt: new Date().toISOString(),
     };
@@ -350,50 +350,63 @@ Return only valid JSON. No markdown fences.`;
 
 // â”€â”€ Request parsers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+// CROO store wraps user input as {"text": "..."} -- unwrap before parsing
+function unwrapText(requirements: string): string {
+  try {
+    const obj = JSON.parse(requirements) as Record<string, unknown>;
+    if (obj && typeof obj.text === 'string') return obj.text;
+  } catch { /* fall through */ }
+  return requirements;
+}
+
 function parseResearchRequest(requirements: string): ResearchTask {
+  const raw = unwrapText(requirements);
   let parsed: unknown = null;
-  try { parsed = JSON.parse(requirements); } catch { /* fall through */ }
+  try { parsed = JSON.parse(raw); } catch { /* fall through */ }
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     if (typeof obj.query === 'string') {
       return { query: obj.query, maxSources: typeof obj.maxSources === 'number' ? obj.maxSources : undefined };
     }
   }
-  return { query: typeof parsed === 'string' ? parsed : requirements };
+  return { query: typeof parsed === 'string' ? parsed : raw };
 }
 
 function parseRiskRequest(requirements: string): RiskAnalysisTask {
+  const raw = unwrapText(requirements);
   let parsed: unknown = null;
-  try { parsed = JSON.parse(requirements); } catch { /* fall through */ }
+  try { parsed = JSON.parse(raw); } catch { /* fall through */ }
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     if (typeof obj.address === 'string') {
       return { address: obj.address, chainId: typeof obj.chainId === 'number' ? obj.chainId : undefined };
     }
   }
-  const plain = typeof parsed === 'string' ? parsed : requirements;
+  const plain = typeof parsed === 'string' ? parsed : raw;
   const match = ETH_ADDRESS_RE.exec(plain);
   if (match) return { address: match[0] };
   throw new Error(`No Ethereum address found in requirements: ${requirements}`);
 }
 
 function parseHyperliquidRequest(requirements: string): HyperliquidVaultTask {
+  const raw = unwrapText(requirements);
   let parsed: unknown = null;
-  try { parsed = JSON.parse(requirements); } catch { /* fall through */ }
+  try { parsed = JSON.parse(raw); } catch { /* fall through */ }
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     const addr = obj.vaultAddress ?? obj.address ?? obj.vault_address;
     if (typeof addr === 'string') return { vaultAddress: addr };
   }
-  const plain = typeof parsed === 'string' ? parsed : requirements;
+  const plain = typeof parsed === 'string' ? parsed : raw;
   const match = ETH_ADDRESS_RE.exec(plain);
   if (match) return { vaultAddress: match[0] };
   throw new Error(`No vault address found in requirements: ${requirements}`);
 }
 
 function parseDueDiligenceRequest(requirements: string): DueDiligenceRequest {
+  const raw = unwrapText(requirements);
   let parsed: unknown = null;
-  try { parsed = JSON.parse(requirements); } catch { /* fall through */ }
+  try { parsed = JSON.parse(raw); } catch { /* fall through */ }
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     const query = typeof obj.query === 'string' ? obj.query : '';
@@ -401,8 +414,8 @@ function parseDueDiligenceRequest(requirements: string): DueDiligenceRequest {
     const chainId = typeof obj.chainId === 'number' ? obj.chainId : undefined;
     if (query || address) return { query: query || `Analyze ${address}`, address, chainId };
   }
-  // Plain string â€” check for embedded address
-  const plain = typeof parsed === 'string' ? parsed : requirements;
+  // Plain string -- check for embedded address
+  const plain = typeof parsed === 'string' ? parsed : raw;
   const match = ETH_ADDRESS_RE.exec(plain);
   return { query: plain, address: match ? match[0] : undefined };
 }
@@ -572,7 +585,7 @@ Return only valid JSON. No markdown fences.`;
       report: string;
     };
 
-    console.log(`[coordinator] hyperliquid: ${vault.name} → ${parsed.badge} (score: ${parsed.riskScore}/100)`);
+    console.log(`[coordinator] hyperliquid: ${vault.name} -> ${parsed.badge} (score: ${parsed.riskScore}/100)`);
 
     return {
       vaultAddress: task.vaultAddress,
@@ -623,10 +636,32 @@ async function main() {
 
   const client = new AgentClient(CROO_CONFIG, requireEnv('CROO_SDK_KEY_COORDINATOR'));
   const stream = await client.connectWebSocket();
-  console.log('[coordinator] online — services: research | risk_check | due_diligence | hyperliquid_vault');
+  console.log('[coordinator] online -- services: research | risk_check | due_diligence | hyperliquid_vault');
 
-  // orderId â†’ { requirements, serviceId } â€” populated at accept, consumed at OrderPaid
+  // orderId -> { requirements, serviceId } -- populated at accept, consumed at OrderPaid
   const userOrders = new Map<string, OrderEntry>();
+
+  // Recover any orders that were paid but not delivered before last restart
+  try {
+    const paid = await client.listOrders({ role: 'provider', status: 'paid' } as Parameters<typeof client.listOrders>[0]);
+    const paidOrders = Array.isArray(paid) ? paid : (paid as { orders?: unknown[] }).orders ?? [];
+    if (paidOrders.length > 0) {
+      console.log(`[coordinator] recovering ${paidOrders.length} paid order(s) from before restart`);
+      for (const o of paidOrders as Array<{ orderId: string; serviceId: string; negotiationId: string }>) {
+        try {
+          const neg = await client.getNegotiation(o.negotiationId);
+          const requirements = (neg as { requirements: string }).requirements ?? '';
+          console.log(`[coordinator] recovering order ${o.orderId} (service: ${o.serviceId})`);
+          // Process in background -- don't await so we don't block WS handler setup
+          void processOrder(client, o.orderId, o.serviceId, requirements);
+        } catch (err) {
+          console.error(`[coordinator] failed to recover order ${o.orderId}:`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[coordinator] startup recovery failed:', err);
+  }
 
   stream.on(EventType.NegotiationCreated, async (e) => {
     try {
@@ -636,7 +671,7 @@ async function main() {
         serviceId: result.negotiation.serviceId,
       });
       console.log(
-        `[coordinator] accepted negotiation â†’ order ${result.order.orderId} (service: ${result.negotiation.serviceId})`,
+        `[coordinator] accepted negotiation â†' order ${result.order.orderId} (service: ${result.negotiation.serviceId})`,
       );
     } catch (err) {
       console.error('[coordinator] failed to accept negotiation:', err);
@@ -647,55 +682,13 @@ async function main() {
     const orderId = e.order_id!;
     const entry = userOrders.get(orderId);
     if (!entry) return;
-
     userOrders.delete(orderId);
-    const { requirements, serviceId } = entry;
-    console.log(`[coordinator] order paid: ${orderId} (service: ${serviceId})`);
-
-    const RESEARCH_SVC = requireEnv('CROO_SERVICE_ID_RESEARCH');
-    const RISK_SVC = requireEnv('CROO_SERVICE_ID_RISK_CHECK');
-    const RISK_AGENT_SVC = requireEnv('CROO_SERVICE_ID_RISK');
-    const DD_SVC = requireEnv('CROO_SERVICE_ID_DUE_DILIGENCE');
-    const HL_SVC = requireEnv('CROO_SERVICE_ID_HYPERLIQUID');
-
-    try {
-      let result: SynthesisResult | RiskAnalysisResult | DueDiligenceResult | HyperliquidVaultResult;
-      let pipelineLabel: string;
-
-      if (serviceId === RESEARCH_SVC) {
-        result = await runResearchPipeline(parseResearchRequest(requirements));
-        pipelineLabel = 'research';
-      } else if (serviceId === RISK_SVC || serviceId === RISK_AGENT_SVC) {
-        result = await runRiskPipeline(parseRiskRequest(requirements));
-        pipelineLabel = 'risk_check';
-      } else if (serviceId === DD_SVC) {
-        result = await runDueDiligencePipeline(requirements);
-        pipelineLabel = 'due_diligence';
-      } else if (serviceId === HL_SVC) {
-        result = await runHyperliquidPipeline(parseHyperliquidRequest(requirements));
-        pipelineLabel = 'hyperliquid_vault';
-      } else {
-        throw new Error(`Unknown service ID: ${serviceId}`);
-      }
-
-      await client.deliverOrder(orderId, {
-        deliverableType: DeliverableType.Text,
-        deliverableText: JSON.stringify(result),
-      });
-      console.log(`[coordinator] delivered ${pipelineLabel} result for order ${orderId}`);
-    } catch (err) {
-      console.error('[coordinator] pipeline failed:', err);
-      const reason = err instanceof Error ? err.message : 'Pipeline failed';
-      if (err instanceof APIError) {
-        await client.rejectOrder(orderId, err.message).catch(() => {});
-      } else {
-        await client.rejectOrder(orderId, reason).catch(() => {});
-      }
-    }
+    console.log(`[coordinator] order paid: ${orderId} (service: ${entry.serviceId})`);
+    void processOrder(client, orderId, entry.serviceId, entry.requirements);
   });
 
   function shutdown() {
-    console.log('[coordinator] shutting down — closing WebSocket');
+    console.log('[coordinator] shutting down -- closing WebSocket');
     stream.close();
     // Give the WS close frame time to reach the server before exiting
     setTimeout(() => process.exit(0), 3000);
@@ -703,6 +696,49 @@ async function main() {
 
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+}
+
+async function processOrder(client: AgentClient, orderId: string, serviceId: string, requirements: string): Promise<void> {
+  const RESEARCH_SVC = requireEnv('CROO_SERVICE_ID_RESEARCH');
+  const RISK_SVC = requireEnv('CROO_SERVICE_ID_RISK_CHECK');
+  const RISK_AGENT_SVC = requireEnv('CROO_SERVICE_ID_RISK');
+  const DD_SVC = requireEnv('CROO_SERVICE_ID_DUE_DILIGENCE');
+  const HL_SVC = requireEnv('CROO_SERVICE_ID_HYPERLIQUID');
+
+  try {
+    let result: SynthesisResult | RiskAnalysisResult | DueDiligenceResult | HyperliquidVaultResult;
+    let pipelineLabel: string;
+
+    if (serviceId === RESEARCH_SVC) {
+      result = await runResearchPipeline(parseResearchRequest(requirements));
+      pipelineLabel = 'research';
+    } else if (serviceId === RISK_SVC || serviceId === RISK_AGENT_SVC) {
+      result = await runRiskPipeline(parseRiskRequest(requirements));
+      pipelineLabel = 'risk_check';
+    } else if (serviceId === DD_SVC) {
+      result = await runDueDiligencePipeline(unwrapText(requirements));
+      pipelineLabel = 'due_diligence';
+    } else if (serviceId === HL_SVC) {
+      result = await runHyperliquidPipeline(parseHyperliquidRequest(requirements));
+      pipelineLabel = 'hyperliquid_vault';
+    } else {
+      throw new Error(`Unknown service ID: ${serviceId}`);
+    }
+
+    await client.deliverOrder(orderId, {
+      deliverableType: DeliverableType.Text,
+      deliverableText: JSON.stringify(result),
+    });
+    console.log(`[coordinator] delivered ${pipelineLabel} result for order ${orderId}`);
+  } catch (err) {
+    console.error('[coordinator] pipeline failed:', err);
+    const reason = err instanceof Error ? err.message : 'Pipeline failed';
+    if (err instanceof APIError) {
+      await client.rejectOrder(orderId, err.message).catch(() => {});
+    } else {
+      await client.rejectOrder(orderId, reason).catch(() => {});
+    }
+  }
 }
 
 main().catch((err) => {
