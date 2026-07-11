@@ -118,6 +118,8 @@ full_due_diligence("Is Aave V3 safe on Base? 0xA238Dd80C259a72e81d7e4664a9801593
 
 ## Architecture
 
+![Attestr Architecture](docs/architecture.png)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        Users                                │
