@@ -530,7 +530,14 @@ async function runHyperliquidPipeline(task: HyperliquidVaultTask): Promise<Hyper
     body: JSON.stringify({ type: 'vaultDetails', vaultAddress: task.vaultAddress }),
   });
   if (!res.ok) throw new Error(`Hyperliquid API error: ${res.status}`);
-  const vault = (await res.json()) as HyperliquidVaultDetails;
+  const vaultPayload = await res.json();
+  if (!vaultPayload || typeof vaultPayload !== 'object') {
+    throw new Error(`Hyperliquid API returned invalid vault data for ${task.vaultAddress}`);
+  }
+  const vault = vaultPayload as HyperliquidVaultDetails;
+  if (vault.tvl == null || vault.name == null || vault.leader == null) {
+    throw new Error(`Hyperliquid vault not found or invalid for ${task.vaultAddress}`);
+  }
 
   const tvl = parseFloat(vault.tvl ?? '0');
   const apr = vault.apr ?? 0;
