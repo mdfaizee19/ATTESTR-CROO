@@ -185,6 +185,23 @@ Lists orders received by the coordinator on the CROO network, most recent first,
 
 ---
 
+## Commands (Prompts)
+
+Beyond the 6 tools, the server exposes 6 MCP **prompts** — one per tool — as slash-command-style shortcuts. Clients that render MCP prompts (Claude.ai, Claude Desktop) show these directly in the "/" command menu once connected, so you don't have to phrase a request in plain English to get a specific action:
+
+| Command | Arguments |
+|---|---|
+| `attestr-status` | none |
+| `attestr-orders` | `status` (optional) |
+| `attestr-risk-check` | `address` |
+| `attestr-research` | `query` |
+| `attestr-vault-check` | `vault_address` |
+| `attestr-due-diligence` | `query` |
+
+A prompt is a canned message that gets inserted into the conversation and nudges Claude to call the matching tool — it's a distinct MCP primitive from tools, not a shortcut implemented client-side.
+
+---
+
 ## Connect to Claude.ai
 
 The easiest way — no local setup needed.

@@ -6,6 +6,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { AgentClient } from '@croo-network/sdk';
 import { CROO_CONFIG } from '../config';
@@ -446,7 +448,7 @@ async function listAgentOrders(status?: string): Promise<object> {
 function createMcpServer(): Server {
   const server = new Server(
     { name: 'attestr', version: '1.0.0' },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, prompts: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -551,7 +553,81 @@ function createMcpServer(): Server {
     }
   });
 
+  // ── Prompts (slash-command-style shortcuts surfaced by the connector) ──────
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: ATTESTR_PROMPTS }));
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return { messages: [{ role: 'user', content: { type: 'text', text: buildPromptText(name, (args ?? {}) as Record<string, string>) } }] };
+  });
+
   return server;
+}
+
+// ── Prompt definitions ────────────────────────────────────────────────────────
+// One prompt per tool, so each shows up as its own "/attestr-..." command in
+// clients that render MCP prompts (Claude.ai, Claude Desktop). Prompts are a
+// distinct MCP primitive from tools: a prompt is a canned user message that
+// nudges the model to call the matching tool with the right arguments,
+// rather than something the model decides to call on its own.
+
+const ATTESTR_PROMPTS = [
+  {
+    name: 'attestr-status',
+    description: "Check whether the Attestr coordinator is online and how many orders it's processing.",
+    arguments: [],
+  },
+  {
+    name: 'attestr-orders',
+    description: 'List orders received on the CROO network, optionally filtered by status.',
+    arguments: [
+      { name: 'status', description: 'negotiating | paid | delivered | rejected | cancelled', required: false },
+    ],
+  },
+  {
+    name: 'attestr-risk-check',
+    description: 'Check the risk of a contract or wallet address on Base mainnet.',
+    arguments: [{ name: 'address', description: 'Ethereum address (0x...)', required: true }],
+  },
+  {
+    name: 'attestr-research',
+    description: 'Research a Web3 / DeFi topic with live web search and AI synthesis.',
+    arguments: [{ name: 'query', description: 'Research question or topic', required: true }],
+  },
+  {
+    name: 'attestr-vault-check',
+    description: 'Analyze a Hyperliquid vault and get a deposit recommendation.',
+    arguments: [{ name: 'vault_address', description: 'Hyperliquid vault address (0x...)', required: true }],
+  },
+  {
+    name: 'attestr-due-diligence',
+    description: 'Run full due diligence: research + contract risk analysis combined.',
+    arguments: [{ name: 'query', description: 'Query — include an address to trigger risk analysis too', required: true }],
+  },
+];
+
+function buildPromptText(name: string, args: Record<string, string>): string {
+  switch (name) {
+    case 'attestr-status':
+      return "Check the Attestr coordinator's current status with get_agent_status and summarize whether it's online, its uptime, and how many active orders it's processing.";
+    case 'attestr-orders':
+      return args.status
+        ? `List Attestr's orders with status "${args.status}" using list_orders, and summarize them.`
+        : "List all of Attestr's recent orders using list_orders, and summarize them by service and status.";
+    case 'attestr-risk-check':
+      if (!args.address) throw new Error('address is required');
+      return `Check the contract risk for ${args.address} using check_contract_risk and explain the result in plain terms.`;
+    case 'attestr-research':
+      if (!args.query) throw new Error('query is required');
+      return `Research the following Web3 topic using research_web3: ${args.query}`;
+    case 'attestr-vault-check':
+      if (!args.vault_address) throw new Error('vault_address is required');
+      return `Analyze the Hyperliquid vault at ${args.vault_address} using analyze_hyperliquid_vault and give a clear deposit recommendation.`;
+    case 'attestr-due-diligence':
+      if (!args.query) throw new Error('query is required');
+      return `Run full_due_diligence on: ${args.query}`;
+    default:
+      throw new Error(`Unknown prompt: ${name}`);
+  }
 }
 
 // ── OAuth / auth helpers ──────────────────────────────────────────────────────
